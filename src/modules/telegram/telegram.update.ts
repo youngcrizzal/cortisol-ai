@@ -1,7 +1,7 @@
 // src/modules/telegram/telegram.update.ts
 
 import { Logger } from '@nestjs/common';
-import { Update, Start, Help, On, Hears, Ctx, Command } from 'nestjs-telegraf';
+import { Update, Start, Help, On, Hears, Ctx, Command, Next } from 'nestjs-telegraf';
 import { Context } from 'telegraf';
 import { TelegramService } from './telegram.service';
 import { buildVoucherMessage } from 'src/lib/voucher';
@@ -20,51 +20,67 @@ export class TelegramUpdate {
     await this.telegramService.registerUser(user);
 
     await ctx.reply(
-      `👋 Welcome, ${user?.first_name || 'there'}!\n\n` +
-        `I'm your NestJS bot. Here's what I can do:\n\n` +
-        `📌 /start - Start the bot\n` +
-        `❓ /help - Show help\n` +
-        `📊 /status - Get system status\n` +
-        `🌐 /payment_voucher - Fetch data from Payment voucher\n` +
-        `📝 /history - View your message history`,
+      `👋 Xin chào, ${user?.first_name || 'bạn'}!\n\n` +
+        `Tôi là trợ lý kế toán tự động. Các lệnh hiện có:\n\n` +
+        `📋 *Phiếu thu chi:*\n` +
+        `/payment\\_voucher — Xem phiếu chi mới nhất\n\n` +
+        `📊 *Báo cáo tài chính:*\n` +
+        `/upload\\_tai\\_khoan — Upload danh sách tài khoản\n` +
+        `/upload\\_so\\_cai — Upload sổ cái tháng\n` +
+        `/bao\\_cao — Xuất báo cáo dòng tiền\n` +
+        `/query <câu hỏi> — Hỏi AI về dữ liệu kế toán\n\n` +
+        `/help — Xem lại danh sách lệnh`,
+      { parse_mode: 'Markdown' },
     );
   }
 
   @Help()
   async onHelp(@Ctx() ctx: Context) {
     await ctx.reply(
-      `🤖 *Available Commands:*\n\n` +
-        `/start - Initialize the bot\n` +
-        `/help - Show this help message\n` +
-        `/payment_voucher - Fetch data from Payment voucher\n` +
-        { parse_mode: 'Markdown' },
+      `🤖 *Danh sách lệnh:*\n\n` +
+        `📋 *Phiếu thu chi:*\n` +
+        `/payment\\_voucher — Xem phiếu chi mới nhất\n\n` +
+        `📊 *Báo cáo tài chính:*\n` +
+        `/upload\\_tai\\_khoan — Upload danh sách tài khoản (Excel)\n` +
+        `/upload\\_so\\_cai — Upload sổ cái tháng (Excel)\n` +
+        `/bao\\_cao — Xuất file tổng hợp dòng tiền\n` +
+        `/query <câu hỏi> — Truy vấn AI bằng ngôn ngữ tự nhiên\n\n` +
+        `💡 Ví dụ: /query Chi phí nhân sự tháng này là bao nhiêu?`,
+      { parse_mode: 'Markdown' },
     );
-  }
-
-  @Start()
-  start(@Ctx() ctx: Context) {
-    ctx.reply('Welcome to Cortisol AI bot 🚀');
   }
 
   @Command('payment_voucher')
   async onFetch(@Ctx() ctx: Context) {
-    await ctx.reply('⏳ Cứ từ từ Hà Nội không vội bạn ơi...');
-    const listVoucherMsg = await this.telegramService.getListPaymentVoucher();
-    const firstVoucherMsg = buildVoucherMessage(listVoucherMsg[0]);
-    await ctx.reply(`${firstVoucherMsg}`, { parse_mode: 'Markdown' });
-  }
-
-  @On('text')
-  onMessage(@Ctx() ctx: Context) {
-    const text = 'Good morning';
-
-    ctx.reply(`You said: ${text}`);
+    await ctx.reply('⏳ Đang tải dữ liệu phiếu chi...');
+    try {
+      const listVoucherMsg = await this.telegramService.getListPaymentVoucher();
+      if (!listVoucherMsg?.length) {
+        await ctx.reply('📭 Không có phiếu chi nào.');
+        return;
+      }
+      const firstVoucherMsg = buildVoucherMessage(listVoucherMsg[0]);
+      await ctx.reply(`${firstVoucherMsg}`, { parse_mode: 'Markdown' });
+    } catch (error) {
+      this.logger.error(`Error fetching voucher: ${error.message}`);
+      await ctx.reply('❌ Không thể tải phiếu chi. Vui lòng thử lại.');
+    }
   }
 
   @Hears(/hello/i)
   async onHello(@Ctx() ctx: Context) {
     await ctx.reply(
-      `Hello! 👋 Nice to meet you! Type /help for available commands.`,
+      `Xin chào! 👋 Gõ /help để xem danh sách lệnh.`,
     );
+  }
+
+  @On('text')
+  async onMessage(@Ctx() ctx: Context, @Next() next: () => Promise<void>) {
+    const text = (ctx.message as any)?.text ?? '';
+    if (text.startsWith('/')) {
+      await next(); // pass to @Command handlers in other @Update classes
+      return;
+    }
+    await ctx.reply('Gõ /help để xem danh sách lệnh.');
   }
 }

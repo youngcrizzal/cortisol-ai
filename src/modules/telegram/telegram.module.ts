@@ -1,16 +1,21 @@
 // src/modules/telegram/telegram.module.ts
 
 import { Module } from '@nestjs/common';
-import { TelegramService } from './telegram.service';
-import { HttpModule } from '../http/http.module';
-import { TelegramUpdate } from './telegram.update';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TelegrafModule } from 'nestjs-telegraf';
+import { HttpModule } from '../http/http.module';
+import { TelegramService } from './telegram.service';
+import { TelegramUpdate } from './telegram.update';
 
 @Module({
   imports: [
     HttpModule,
-    TelegrafModule.forRoot({
-      token: '8601007474:AAFBXxfVRlUgOSCzFnPlcZg73MnDLecTaPA',
+    TelegrafModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        token: config.getOrThrow<string>('TELEGRAM_BOT_TOKEN'),
+      }),
     }),
   ],
   providers: [TelegramService, TelegramUpdate],

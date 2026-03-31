@@ -1,15 +1,34 @@
 // src/modules/http/http.service.ts
 
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { HttpService as NestHttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { AxiosRequestConfig } from 'axios';
 
 @Injectable()
-export class HttpService {
+export class HttpService implements OnModuleInit {
   private readonly logger = new Logger(HttpService.name);
 
-  constructor(private readonly nestHttpService: NestHttpService) {}
+  constructor(
+    private readonly nestHttpService: NestHttpService,
+    private readonly config: ConfigService,
+  ) {}
+
+  onModuleInit() {
+    const baseURL = this.nestHttpService.axiosRef.defaults.baseURL;
+    this.logger.log(`ERP base URL: ${baseURL}`);
+
+    // Inject auth token at request time (not at module init time)
+    this.nestHttpService.axiosRef.interceptors.request.use((cfg) => {
+      const token = this.config.get<string>('ERP_ACCESS_TOKEN');
+      if (token && !cfg.headers['Authorization']) {
+        cfg.headers['Authorization'] = `Bearer ${token}`;
+      }
+      this.logger.debug(`→ ${cfg.method?.toUpperCase()} ${cfg.baseURL ?? ''}${cfg.url} (auth: ${!!cfg.headers['Authorization']})`);
+      return cfg;
+    });
+  }
 
   async get<T = any>(url: string, config?: AxiosRequestConfig): Promise<T> {
     try {

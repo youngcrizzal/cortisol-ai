@@ -163,3 +163,31 @@ model Creator {
 
   vouchers PaymentVoucher[]
 }
+
+model ChartOfAccount {
+  code       String  @id
+  name       String
+  parentCode String?
+  type       String  // "thu" | "chi"
+  isActive   Boolean @default(true)
+}
+
+model VoucherPollState {
+  voucherId       String   @id
+  lastKnownStatus String
+  notifiedAt      DateTime
+  messageData     Json     @default("{}")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model LedgerEntry {
+  id      String @id @default(uuid())
+  month   Int
+  year    Int
+  tkDuong String
+  no      Float
+  co      Float
+
+  @@unique([month, year, tkDuong])
+}
