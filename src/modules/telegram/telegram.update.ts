@@ -478,11 +478,4 @@ export class TelegramUpdate {
 
     return true;
   }
-
-  @Hears(/hello/i)
-  async onHello(@Ctx() ctx: Context) {
-    await ctx.reply(
-      `Hello! 👋 Nice to meet you! Type /help for available commands.`,
-    );
-  }
 }

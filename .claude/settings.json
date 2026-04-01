@@ -1,0 +1,57 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_FILE_PATH\" == *.ts ]]; then cd /Users/tranninh/Documents/GitHub/cortisol-ai && pnpm prettier --write \"$CLAUDE_TOOL_INPUT_FILE_PATH\" && pnpm eslint --fix \"$CLAUDE_TOOL_INPUT_FILE_PATH\"; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_FILE_PATH\" == *.ts ]]; then cd /Users/tranninh/Documents/GitHub/cortisol-ai && pnpm prettier --write \"$CLAUDE_TOOL_INPUT_FILE_PATH\" && pnpm eslint --fix \"$CLAUDE_TOOL_INPUT_FILE_PATH\"; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_FILE_PATH\" == *.ts ]]; then cd /Users/tranninh/Documents/GitHub/cortisol-ai && pnpm prettier --write \"$CLAUDE_TOOL_INPUT_FILE_PATH\" && pnpm eslint --fix \"$CLAUDE_TOOL_INPUT_FILE_PATH\"; fi"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_FILE_PATH\" == */prisma/schema.prisma ]]; then echo 'NHẮC NHỞ: Sau khi sửa schema.prisma, hãy chạy: pnpm prisma migrate dev'; fi"
+          },
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_FILE_PATH\" == */pnpm-lock.yaml ]]; then echo 'BLOCKED: Không được sửa pnpm-lock.yaml trực tiếp. Dùng pnpm install hoặc pnpm add <package>.' && exit 1; fi"
+          }
+        ]
+      },
+      {
+        "matcher": "Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [[ \"$CLAUDE_TOOL_INPUT_FILE_PATH\" == */pnpm-lock.yaml ]]; then echo 'BLOCKED: Không được ghi vào pnpm-lock.yaml trực tiếp.' && exit 1; fi"
+          }
+        ]
+      }
+    ]
+  }
+}
