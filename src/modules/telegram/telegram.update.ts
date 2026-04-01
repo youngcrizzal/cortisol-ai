@@ -53,6 +53,37 @@ export class TelegramUpdate {
     );
   }
 
+  @On('my_chat_member')
+  async onMyChatMember(@Ctx() ctx: Context) {
+    const chatMemberUpdate = (ctx.update as any).my_chat_member;
+    if (!chatMemberUpdate) return;
+
+    const isBot = chatMemberUpdate.new_chat_member.user.is_bot;
+    const status = chatMemberUpdate.new_chat_member.status;
+    const chat = chatMemberUpdate.chat;
+
+    if (!isBot || (status !== 'member' && status !== 'administrator')) return;
+
+    const isGroup = chat.type === 'group' || chat.type === 'supergroup';
+    if (!isGroup) return;
+
+    await ctx.reply(
+      `👋 Cảm ơn đã thêm tôi vào nhóm!\n\n` +
+        `🔍 *Trong nhóm, tôi có thể:*\n` +
+        `• Tìm kiếm phiếu bằng câu hỏi tự nhiên\n` +
+        `• Hiển thị chi tiết phiếu\n` +
+        `• Hỗ trợ trả lời câu hỏi\n\n` +
+        `⚠️ *Lưu ý:*\n` +
+        `• Phê duyệt/từ chối phiếu chỉ có thể thực hiện trong tin nhắn riêng\n` +
+        `• Để tìm kiếm phiếu, hãy dùng lệnh: /search_voucher [mô tả]\n` +
+        `• Để xem phiếu mới nhất: /payment_voucher\n` +
+        `• Hoặc nhắn tin tự do để hỏi về phiếu\n\n` +
+        `💡 *Để kết nối ERP cho nhóm:*\n` +
+        `Vui lòng ${ctx.from?.username ? `@${ctx.from.username} ` : ''}nhắn riêng cho bot với lệnh \`/connect_erp <token>\``,
+      { parse_mode: 'Markdown' },
+    );
+  }
+
   @Help()
   async onHelp(@Ctx() ctx: Context) {
     await ctx.reply(
@@ -69,6 +100,17 @@ export class TelegramUpdate {
 
   @Command('connect_erp')
   async onConnectErp(@Ctx() ctx: Context): Promise<void> {
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+
+    if (isGroup) {
+      await ctx.reply(
+        '⚠️ Lệnh `/connect_erp` chỉ có thể sử dụng trong tin nhắn riêng.\n\n' +
+          `Vui lòng ${ctx.from?.username ? `@${ctx.from.username} nhắn riêng cho bot hoặc ` : ''}nhắn riêng cho bot để kết nối tài khoản ERP.`,
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
     const text = (ctx.message as any)?.text ?? '';
     const token = text.replace('/connect_erp', '').trim();
 
@@ -139,22 +181,45 @@ export class TelegramUpdate {
   @Command('search_voucher')
   async onSearchVoucher(@Ctx() ctx: Context): Promise<void> {
     const telegramId = String(ctx.from?.id);
-    const userLink =
-      await this.telegramService.getUserLinkByTelegramId(telegramId);
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+
+    let erpAccessToken: string | undefined;
+
+    if (isGroup && ctx.chat?.id) {
+      // Try to get group token first, then fall back to user token
+      const groupId = String(ctx.chat.id);
+      erpAccessToken = this.telegramService.getGroupErpToken(groupId);
+
+      if (!erpAccessToken) {
+        // Try user's personal token
+        const userLink =
+          await this.telegramService.getUserLinkByTelegramId(telegramId);
+        erpAccessToken = (userLink?.erpAccessToken as string) || undefined;
+      }
+    } else {
+      // Private chat - use user token
+      const userLink =
+        await this.telegramService.getUserLinkByTelegramId(telegramId);
+      erpAccessToken = (userLink?.erpAccessToken as string) || undefined;
+    }
 
     if (
-      !userLink?.erpAccessToken ||
-      this.telegramService.isTokenExpired(userLink.erpAccessToken)
+      !erpAccessToken ||
+      this.telegramService.isTokenExpired(erpAccessToken)
     ) {
       await ctx.reply(
-        '⚠️ Token ERP của bạn đã hết hạn.\nVui lòng đăng nhập lại ERP và gửi:\n\n`/connect_erp <token>`',
+        '⚠️ Token ERP chưa được thiết lập hoặc đã hết hạn.\n' +
+          (isGroup
+            ? 'Vui lòng yêu cầu quản trị viên nhóm hoặc ai đó với tài khoản ERP nhắn riêng cho bot: '
+            : 'Vui lòng ') +
+          '`/connect_erp <token>`',
         { parse_mode: 'Markdown' },
       );
       return;
     }
 
     this.telegramService.setPendingVoucherSearch(telegramId, {
-      erpAccessToken: userLink.erpAccessToken,
+      erpAccessToken,
     });
 
     await ctx.reply(
@@ -171,6 +236,13 @@ export class TelegramUpdate {
 
   @Action(/^approve:/)
   async onApprove(@Ctx() ctx: Context): Promise<void> {
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+
+    if (isGroup) {
+      await ctx.answerCbQuery('⚠️ Phê duyệt chỉ có thể thực hiện trong tin nhắn riêng');
+      return;
+    }
+
     const voucherId = (ctx.callbackQuery as any).data.replace('approve:', '');
     const telegramId = String(ctx.from?.id);
 
@@ -214,6 +286,13 @@ export class TelegramUpdate {
 
   @Action(/^reject:/)
   async onReject(@Ctx() ctx: Context): Promise<void> {
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+
+    if (isGroup) {
+      await ctx.answerCbQuery('⚠️ Từ chối chỉ có thể thực hiện trong tin nhắn riêng');
+      return;
+    }
+
     const voucherId = (ctx.callbackQuery as any).data.replace('reject:', '');
     const telegramId = String(ctx.from?.id);
     const rejectorName =
@@ -386,6 +465,8 @@ export class TelegramUpdate {
     ctx: Context,
   ): Promise<void> {
     const userName = ctx.from?.first_name;
+    const isGroup = ctx.chat?.type === 'group' || ctx.chat?.type === 'supergroup';
+
     try {
       await ctx.sendChatAction('typing');
 
@@ -397,15 +478,34 @@ export class TelegramUpdate {
       });
 
       if (dispatch.tool === 'searchVouchers') {
-        const userLink =
-          await this.telegramService.getUserLinkByTelegramId(telegramId);
+        let erpAccessToken: string | undefined = undefined;
+
+        if (isGroup && ctx.chat?.id) {
+          // Try group token first, then user token
+          const groupId = String(ctx.chat.id);
+          const groupToken = this.telegramService.getGroupErpToken(groupId);
+          if (groupToken) {
+            erpAccessToken = groupToken;
+          } else {
+            const userLink =
+              await this.telegramService.getUserLinkByTelegramId(telegramId);
+            erpAccessToken = (userLink?.erpAccessToken as string) || undefined;
+          }
+        } else {
+          // Private chat
+          const userLink =
+            await this.telegramService.getUserLinkByTelegramId(telegramId);
+          erpAccessToken = (userLink?.erpAccessToken as string) || undefined;
+        }
 
         if (
-          !userLink?.erpAccessToken ||
-          this.telegramService.isTokenExpired(userLink.erpAccessToken)
+          !erpAccessToken ||
+          this.telegramService.isTokenExpired(erpAccessToken)
         ) {
           await ctx.reply(
-            '⚠️ Bạn cần kết nối tài khoản ERP trước.\n\nDùng lệnh /connect_erp <token> để kết nối.',
+            isGroup
+              ? '⚠️ Token ERP chưa được thiết lập. Vui lòng yêu cầu ai đó kết nối ERP qua lệnh: `/connect_erp <token>`'
+              : '⚠️ Bạn cần kết nối tài khoản ERP trước.\n\nDùng lệnh /connect_erp <token> để kết nối.',
           );
           return;
         }
@@ -415,7 +515,7 @@ export class TelegramUpdate {
 
         const result = await this.telegramService.searchVouchers(
           params,
-          userLink.erpAccessToken,
+          erpAccessToken,
         );
         const message =
           this.telegramService.buildVoucherSearchResultMessage(result);

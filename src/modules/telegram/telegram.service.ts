@@ -29,6 +29,7 @@ export class TelegramService {
     PendingVoucherSearch
   >();
   private readonly lastSearchParams = new Map<string, VoucherSearchParams>();
+  private readonly groupTokens = new Map<string, string>(); // groupId -> erpAccessToken
 
   constructor(
     @InjectBot() private readonly bot: Telegraf,
@@ -156,6 +157,14 @@ export class TelegramService {
       where: { externalUserId: telegramId, externalSystem: 'TELEGRAM' },
       data: { erpAccessToken: token },
     });
+  }
+
+  saveGroupErpToken(groupId: string, token: string) {
+    this.groupTokens.set(groupId, token);
+  }
+
+  getGroupErpToken(groupId: string): string | undefined {
+    return this.groupTokens.get(groupId);
   }
 
   isTokenExpired(token: string): boolean {
