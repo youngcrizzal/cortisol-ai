@@ -15,7 +15,7 @@ import { HttpService } from './http.service';
         'Content-Type': 'application/json',
         Accept: 'application/json',
         authorization:
-          'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbWgydTNvem8wMDFmbnQxeThpYXo0M3d4IiwidXNlcklkIjoiY21oMnUzb3pvMDAxZm50MXk4aWF6NDN3eCIsInVzZXJuYW1lIjoidGFpZGQiLCJlbWFpbCI6InRhaWRkQHR3ZW5kZWVzb2Z0LmNvbSIsInJvbGUiOiJBRE1JTiIsInNwZWNpYWxQZXJtaXNzaW9ucyI6W10sImlhdCI6MTc3NDg4MDYzMywiZXhwIjoxNzc0OTY3MDMzfQ.gbIFcWwiSEAjBewPS0Ag69stT9bBhRJGnYR4M-22GyM',
+          'Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJjbWgydTNvem8wMDFmbnQxeThpYXo0M3d4IiwidXNlcklkIjoiY21oMnUzb3pvMDAxZm50MXk4aWF6NDN3eCIsInVzZXJuYW1lIjoidGFpZGQiLCJlbWFpbCI6InRhaWRkQHR3ZW5kZWVzb2Z0LmNvbSIsInJvbGUiOiJBRE1JTiIsInNwZWNpYWxQZXJtaXNzaW9ucyI6W10sImlhdCI6MTc3NTA0MDU2NiwiZXhwIjoxNzc1MTI2OTY2fQ.lnKk__cp20HNcGzJl9jCgtQFjojSXUOAKtPJ6D3yw6Q',
       },
     }),
   ],

@@ -1,10 +1,19 @@
 // src/modules/telegram/telegram.update.ts
 
 import { Logger } from '@nestjs/common';
-import { Update, Start, Help, On, Hears, Ctx, Command } from 'nestjs-telegraf';
+import {
+  Action,
+  Command,
+  Ctx,
+  Hears,
+  Help,
+  On,
+  Start,
+  Update,
+} from 'nestjs-telegraf';
 import { Context } from 'telegraf';
-import { TelegramService } from './telegram.service';
 import { buildVoucherMessage } from 'src/lib/voucher';
+import { TelegramService } from './telegram.service';
 
 @Update()
 export class TelegramUpdate {
@@ -46,6 +55,38 @@ export class TelegramUpdate {
     ctx.reply('Welcome to Cortisol AI bot 🚀');
   }
 
+  @Command('connect_erp')
+  async onConnectErp(@Ctx() ctx: Context): Promise<void> {
+    const text = (ctx.message as any)?.text ?? '';
+    const token = text.replace('/connect_erp', '').trim();
+
+    // Delete the message immediately to avoid exposing the token in chat
+    try {
+      await ctx.deleteMessage();
+    } catch {}
+
+    if (!token) {
+      await ctx.reply(
+        '⚠️ Vui lòng cung cấp token ERP của bạn:\n\n`/connect_erp <token>`\n\nLấy token: Đăng nhập ERP → F12 → Application → localStorage → `access_token`',
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
+    if (this.telegramService.isTokenExpired(token)) {
+      await ctx.reply(
+        '❌ Token đã hết hạn. Vui lòng đăng nhập lại vào ERP và lấy token mới.',
+      );
+      return;
+    }
+
+    const telegramId = String(ctx.from?.id);
+    await this.telegramService.saveErpToken(telegramId, token);
+    await ctx.reply(
+      '✅ Đã lưu token ERP thành công! Bạn có thể phê duyệt phiếu qua Telegram.',
+    );
+  }
+
   @Command('payment_voucher')
   async onFetch(@Ctx() ctx: Context) {
     await ctx.reply('⏳ Cứ từ từ Hà Nội không vội bạn ơi...');
@@ -54,11 +95,177 @@ export class TelegramUpdate {
     await ctx.reply(`${firstVoucherMsg}`, { parse_mode: 'Markdown' });
   }
 
-  @On('text')
-  onMessage(@Ctx() ctx: Context) {
-    const text = 'Good morning';
+  @Action(/^approve:/)
+  async onApprove(@Ctx() ctx: Context): Promise<void> {
+    const voucherId = (ctx.callbackQuery as any).data.replace('approve:', '');
+    const telegramId = String(ctx.from?.id);
 
-    ctx.reply(`You said: ${text}`);
+    const userLink =
+      await this.telegramService.getUserLinkByTelegramId(telegramId);
+
+    if (
+      !userLink?.erpAccessToken ||
+      this.telegramService.isTokenExpired(userLink.erpAccessToken)
+    ) {
+      await ctx.answerCbQuery('⚠️ Token ERP hết hạn');
+      await ctx.reply(
+        '⚠️ Token ERP của bạn đã hết hạn.\nVui lòng đăng nhập lại ERP và gửi:\n\n`/connect_erp <token>`',
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
+    try {
+      await this.telegramService.approveVoucher(
+        voucherId,
+        userLink.erpAccessToken,
+      );
+
+      try {
+        await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+      } catch {}
+
+      await ctx.answerCbQuery('✅ Phê duyệt thành công');
+      await ctx.reply('✅ *Phê duyệt thành công*', { parse_mode: 'Markdown' });
+
+      await this.telegramService.notifyNextPendingApprover(voucherId);
+    } catch (error) {
+      this.logger.error(
+        `Approve failed for voucher ${voucherId}: ${error.message}`,
+      );
+      console.log('>>error: ', error);
+      await ctx.answerCbQuery('❌ Có lỗi xảy ra, vui lòng thử lại');
+    }
+  }
+
+  @Action(/^reject:/)
+  async onReject(@Ctx() ctx: Context): Promise<void> {
+    const voucherId = (ctx.callbackQuery as any).data.replace('reject:', '');
+    const telegramId = String(ctx.from?.id);
+    const rejectorName = ctx.from?.first_name ?? 'Approver';
+
+    const userLink =
+      await this.telegramService.getUserLinkByTelegramId(telegramId);
+
+    if (
+      !userLink?.erpAccessToken ||
+      this.telegramService.isTokenExpired(userLink.erpAccessToken)
+    ) {
+      await ctx.answerCbQuery('⚠️ Token ERP hết hạn');
+      await ctx.reply(
+        '⚠️ Token ERP của bạn đã hết hạn.\nVui lòng đăng nhập lại ERP và gửi:\n\n`/connect_erp <token>`',
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
+    // Remove buttons and store pending rejection state
+    try {
+      await ctx.editMessageReplyMarkup({ inline_keyboard: [] });
+    } catch {}
+
+    await ctx.answerCbQuery();
+
+    this.telegramService.setPendingRejection(telegramId, {
+      voucherId,
+      erpAccessToken: userLink.erpAccessToken,
+      rejectorName,
+      step: 'reason',
+    });
+
+    await ctx.reply('📝 *Bước 1/2* — Nhập *lý do từ chối* (reason):', {
+      parse_mode: 'Markdown',
+      reply_markup: { force_reply: true, selective: true },
+    });
+  }
+
+  @On('text')
+  async onMessage(@Ctx() ctx: Context): Promise<void> {
+    const telegramId = String(ctx.from?.id);
+    const text = ((ctx.message as any)?.text ?? '').trim();
+    await this.handleRejectionInput(telegramId, text, ctx);
+  }
+
+  @On('voice')
+  async onVoice(@Ctx() ctx: Context): Promise<void> {
+    const telegramId = String(ctx.from?.id);
+    const fileId = (ctx.message as any)?.voice?.file_id;
+
+    const pending = this.telegramService.getPendingRejection(telegramId);
+    if (!pending) return;
+
+    const processingMsg = await ctx.reply(
+      '🎤 Đang chuyển giọng nói thành văn bản...',
+    );
+
+    try {
+      const text = await this.telegramService.transcribeVoice(fileId);
+
+      try {
+        await ctx.telegram.deleteMessage(
+          ctx.chat!.id,
+          processingMsg.message_id,
+        );
+      } catch {}
+
+      await ctx.reply(`🎤 *Nhận được:* _${text}_`, {
+        parse_mode: 'Markdown',
+      });
+      await this.handleRejectionInput(telegramId, text, ctx);
+    } catch (error) {
+      this.logger.error(`Voice transcription failed: ${error.message}`);
+      await ctx.reply(
+        '❌ Không thể chuyển giọng nói thành văn bản, vui lòng nhập text.',
+      );
+    }
+  }
+
+  private async handleRejectionInput(
+    telegramId: string,
+    text: string,
+    ctx: Context,
+  ): Promise<void> {
+    const pending = this.telegramService.getPendingRejection(telegramId);
+    if (!pending) return;
+
+    if (pending.step === 'reason') {
+      this.telegramService.setPendingRejection(telegramId, {
+        ...pending,
+        step: 'comments',
+        reason: text,
+      });
+      await ctx.reply('💬 *Bước 2/2* — Nhập *bình luận bổ sung* (comments):', {
+        parse_mode: 'Markdown',
+        reply_markup: { force_reply: true, selective: true },
+      });
+      return;
+    }
+
+    // step === 'comments' — submit rejection
+    this.telegramService.clearPendingRejection(telegramId);
+    try {
+      await this.telegramService.rejectVoucher(
+        pending.voucherId,
+        pending.erpAccessToken,
+        text,
+        pending.reason ?? '',
+      );
+      await ctx.reply('❌ *Đã từ chối phiếu thành công*', {
+        parse_mode: 'Markdown',
+      });
+      await this.telegramService.notifyVoucherCreatorRejected(
+        pending.voucherId,
+        pending.rejectorName,
+        pending.reason ?? '',
+        text,
+      );
+    } catch (error) {
+      this.logger.error(
+        `Reject failed for voucher ${pending.voucherId}: ${error.message}`,
+      );
+      console.log('>>error: ', error?.response?.data);
+      await ctx.reply('❌ Có lỗi xảy ra khi từ chối phiếu, vui lòng thử lại.');
+    }
   }
 
   @Hears(/hello/i)

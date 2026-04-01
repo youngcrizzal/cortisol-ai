@@ -163,3 +163,23 @@ model Creator {
 
   vouchers PaymentVoucher[]
 }
+
+model UserLink {
+  id               String  @id
+  userId           String
+  externalSystem   String
+  externalUserId   String
+  externalUsername String?
+  metadata         Json?
+  active           Boolean
+
+  userEmail     String?
+  userUsername  String?
+  userFirstName String?
+  userLastName  String?
+
+  erpAccessToken String?
+
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+}

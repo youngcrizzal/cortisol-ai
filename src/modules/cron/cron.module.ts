@@ -1,12 +1,13 @@
 // src/modules/cron/cron.module.ts
 
 import { Module } from '@nestjs/common';
-import { CronService } from './cron.service';
-import { HttpModule } from '../http/http.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { HttpModule } from '../http/http.module';
+import { TelegramModule } from '../telegram/telegram.module';
+import { CronService } from './cron.service';
 
 @Module({
-  imports: [HttpModule, ScheduleModule.forRoot()],
+  imports: [HttpModule, ScheduleModule.forRoot(), TelegramModule],
   providers: [CronService],
   exports: [CronService],
 })
