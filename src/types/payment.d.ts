@@ -123,3 +123,28 @@ interface Creator {
 }
 
 type ListPaymentVoucherResponse = PaginationResponse<PaymentVoucher>;
+
+type AvailableTool = 'searchVouchers' | 'chat';
+
+interface ToolCall {
+  tool: AvailableTool;
+  arguments: Record<string, any>;
+}
+
+interface VoucherSearchParams {
+  voucherType?: string;
+  status?: string;
+  content?: string;
+  payerReceiver?: string;
+  issueDateFrom?: string;
+  issueDateTo?: string;
+  postingDateFrom?: string;
+  postingDateTo?: string;
+  minAmount?: number;
+  maxAmount?: number;
+  currency?: string;
+  page?: number;
+  limit?: number;
+  sortBy?: string;
+  sortOrder?: string;
+}

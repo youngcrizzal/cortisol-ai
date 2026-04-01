@@ -66,12 +66,21 @@ export function buildVoucherMessage(voucher: any): string {
   msg += `📅 *Ngày lập:* ${issueDate}\n`;
   msg += `📅 *Ngày hạch toán:* ${postingDate}\n\n`;
 
+  const payerReceiverLabel =
+    voucher.voucherType === 'RECEIPT' ? 'Người gửi' : 'Người nhận';
+
   msg += `👤 *Người tạo:* ${creatorName}\n`;
-  msg += `👥 *Người nhận:* ${voucher.payerReceiver || '-'}\n\n`;
+  msg += `👥 *${payerReceiverLabel}:* ${voucher.payerReceiver || '-'}\n\n`;
 
   msg += `📝 *Nội dung:* ${voucher.content || '-'}\n\n`;
 
   msg += `🏦 *Ngân hàng:* ${voucher.account?.bank || '-'}\n`;
+  if (voucher.account?.name) {
+    msg += `🏷️ *Tên TK ngân hàng:* ${voucher.account.name}\n`;
+  }
+  if (voucher.account?.code) {
+    msg += `🔢 *Mã TK:* ${voucher.account.code}\n`;
+  }
   msg += `💳 *Số tài khoản:* ${voucher.bankAccount || '-'}\n`;
   msg += `💰 *Số tiền:* ${amount}\n`;
 
@@ -118,4 +127,44 @@ export function buildVoucherMessage(voucher: any): string {
   }
 
   return msg;
+}
+
+const VOUCHER_STATUS_VI: Record<string, string> = {
+  DRAFT: 'Bản thảo',
+  PROCESSING: 'Đang xử lý',
+  APPROVED: 'Đã duyệt',
+  REJECTED: 'Từ chối',
+  CANCELLED: 'Đã hủy',
+};
+
+export function buildVoucherListMessage(
+  vouchers: PaymentVoucher[],
+  total: number,
+  page: number,
+  totalPages: number,
+): string {
+  if (vouchers.length === 0) {
+    return '📭 Không tìm thấy phiếu nào phù hợp.';
+  }
+
+  let msg = `🔍 *Kết quả tìm kiếm:* ${total} phiếu`;
+  if (totalPages > 1) {
+    msg += ` _(trang ${page}/${totalPages})_`;
+  }
+  msg += `\n\n`;
+
+  vouchers.forEach((v, i) => {
+    const type = VOUCHER_TYPE_MAP[v.voucherType] ?? v.voucherType;
+    const status = VOUCHER_STATUS_VI[v.status] ?? v.status;
+    const amount = formatAmount(v.totalAmount, v.currency);
+    const date = formatDate(v.issueDate);
+
+    msg += `*${(page - 1) * vouchers.length + i + 1}. ${v.code}* — ${type}\n`;
+    msg += `   💰 ${amount}  |  📊 ${status}\n`;
+    msg += `   📅 ${date}  |  👥 ${v.payerReceiver || '-'}\n`;
+    if (v.content) msg += `   📝 ${v.content}\n`;
+    msg += `\n`;
+  });
+
+  return msg.trimEnd();
 }

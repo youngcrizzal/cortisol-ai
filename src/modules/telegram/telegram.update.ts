@@ -28,31 +28,43 @@ export class TelegramUpdate {
 
     await this.telegramService.registerUser(user);
 
+    const name = user?.first_name || 'bạn';
     await ctx.reply(
-      `👋 Welcome, ${user?.first_name || 'there'}!\n\n` +
-        `I'm your NestJS bot. Here's what I can do:\n\n` +
-        `📌 /start - Start the bot\n` +
-        `❓ /help - Show help\n` +
-        `📊 /status - Get system status\n` +
-        `🌐 /payment_voucher - Fetch data from Payment voucher\n` +
-        `📝 /history - View your message history`,
+      `👋 Xin chào, <b>${name}</b>!\n\n` +
+        `Tôi là trợ lý quản lý <b>phiếu kế toán ERP</b> qua Telegram.\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `⚙️ <b>Thiết lập</b>\n` +
+        `/connect_erp &lt;token&gt; — Kết nối tài khoản ERP\n\n` +
+        `🔍 <b>Tìm kiếm phiếu</b>\n` +
+        `/search_voucher — Tìm kiếm bằng ngôn ngữ tự nhiên\n` +
+        `/examplesearch — Xem ví dụ câu tìm kiếm\n` +
+        `/payment_voucher — Xem phiếu mới nhất\n\n` +
+        `✅ <b>Phê duyệt phiếu</b>\n` +
+        `Bot tự động gửi thông báo khi có phiếu cần duyệt.\n` +
+        `Bạn chỉ cần nhấn nút <b>Phê duyệt</b> hoặc <b>Từ chối</b>.\n\n` +
+        `🔔 <b>Thông báo tự động</b>\n` +
+        `• Người duyệt tiếp theo được thông báo sau mỗi lần phê duyệt\n` +
+        `• Người duyệt trước được thông báo khi phiếu bị từ chối\n` +
+        `• Người tạo và người duyệt đầu được thông báo khi hoàn tất\n\n` +
+        `━━━━━━━━━━━━━━━━━━━━━\n` +
+        `💬 Bạn cũng có thể <b>nhắn tin hoặc gửi giọng nói</b> để tôi hỗ trợ!\n` +
+        `/help — Xem lại danh sách lệnh`,
+      { parse_mode: 'HTML' },
     );
   }
 
   @Help()
   async onHelp(@Ctx() ctx: Context) {
     await ctx.reply(
-      `🤖 *Available Commands:*\n\n` +
-        `/start - Initialize the bot\n` +
-        `/help - Show this help message\n` +
-        `/payment_voucher - Fetch data from Payment voucher\n` +
-        { parse_mode: 'Markdown' },
+      `🤖 <b>Danh sách lệnh:</b>\n\n` +
+        `/connect_erp &lt;token&gt; — Kết nối tài khoản ERP\n` +
+        `/search_voucher — Tìm kiếm phiếu bằng ngôn ngữ tự nhiên\n` +
+        `/examplesearch — Xem ví dụ câu tìm kiếm\n` +
+        `/payment_voucher — Xem phiếu mới nhất\n` +
+        `/help — Hiển thị trợ giúp này\n\n` +
+        `💬 Nhắn tin tự do hoặc gửi giọng nói để hỏi thêm!`,
+      { parse_mode: 'HTML' },
     );
-  }
-
-  @Start()
-  start(@Ctx() ctx: Context) {
-    ctx.reply('Welcome to Cortisol AI bot 🚀');
   }
 
   @Command('connect_erp')
@@ -93,6 +105,68 @@ export class TelegramUpdate {
     const listVoucherMsg = await this.telegramService.getListPaymentVoucher();
     const firstVoucherMsg = buildVoucherMessage(listVoucherMsg[0]);
     await ctx.reply(`${firstVoucherMsg}`, { parse_mode: 'Markdown' });
+  }
+
+  @Command('examplesearch')
+  async onExampleSearch(@Ctx() ctx: Context): Promise<void> {
+    await ctx.reply(
+      `💡 *Ví dụ tìm kiếm phiếu*\n\n` +
+        `Sau khi gõ /search\\_voucher, bạn có thể nhập:\n\n` +
+        `*Theo loại & trạng thái:*\n` +
+        `• Tìm phiếu chi đã duyệt\n` +
+        `• Phiếu thu bị từ chối\n` +
+        `• Tất cả phiếu đang chờ duyệt\n\n` +
+        `*Theo thời gian:*\n` +
+        `• Phiếu chi tháng 3 năm 2024\n` +
+        `• Phiếu thu quý 1 2025\n` +
+        `• Phiếu chi tuần này\n` +
+        `• Phiếu từ 01/01/2024 đến 30/06/2024\n\n` +
+        `*Theo số tiền:*\n` +
+        `• Phiếu chi trên 10 triệu\n` +
+        `• Phiếu thu dưới 5 triệu đồng\n` +
+        `• Phiếu chi từ 1 triệu đến 50 triệu\n\n` +
+        `*Theo nội dung / người:*\n` +
+        `• Phiếu chi lương tháng 4\n` +
+        `• Tìm phiếu của Nguyễn Văn A\n` +
+        `• Phiếu chi tiền thưởng đã duyệt\n\n` +
+        `*Kết hợp nhiều điều kiện:*\n` +
+        `• Phiếu chi lương tháng 3 trên 15 triệu đã duyệt\n` +
+        `• Phiếu thu bị từ chối quý 2 2024 dưới 10 triệu`,
+      { parse_mode: 'Markdown' },
+    );
+  }
+
+  @Command('search_voucher')
+  async onSearchVoucher(@Ctx() ctx: Context): Promise<void> {
+    const telegramId = String(ctx.from?.id);
+    const userLink =
+      await this.telegramService.getUserLinkByTelegramId(telegramId);
+
+    if (
+      !userLink?.erpAccessToken ||
+      this.telegramService.isTokenExpired(userLink.erpAccessToken)
+    ) {
+      await ctx.reply(
+        '⚠️ Token ERP của bạn đã hết hạn.\nVui lòng đăng nhập lại ERP và gửi:\n\n`/connect_erp <token>`',
+        { parse_mode: 'Markdown' },
+      );
+      return;
+    }
+
+    this.telegramService.setPendingVoucherSearch(telegramId, {
+      erpAccessToken: userLink.erpAccessToken,
+    });
+
+    await ctx.reply(
+      `🔍 *Tìm kiếm phiếu*\n\n` +
+        `Nhập yêu cầu bằng ngôn ngữ tự nhiên hoặc gửi tin nhắn thoại:\n\n` +
+        `*Ví dụ:*\n` +
+        `• Tìm phiếu chi tháng 3 2024 đã duyệt\n` +
+        `• Phiếu thu bị từ chối từ tháng 1 đến tháng 6\n` +
+        `• Phiếu chi lương trên 10 triệu\n` +
+        `• Tìm phiếu chờ duyệt của Nguyễn Văn A`,
+      { parse_mode: 'Markdown' },
+    );
   }
 
   @Action(/^approve:/)
@@ -142,7 +216,9 @@ export class TelegramUpdate {
   async onReject(@Ctx() ctx: Context): Promise<void> {
     const voucherId = (ctx.callbackQuery as any).data.replace('reject:', '');
     const telegramId = String(ctx.from?.id);
-    const rejectorName = ctx.from?.first_name ?? 'Approver';
+    const rejectorName =
+      [ctx.from?.first_name, ctx.from?.last_name].filter(Boolean).join(' ') ||
+      'Approver';
 
     const userLink =
       await this.telegramService.getUserLinkByTelegramId(telegramId);
@@ -183,7 +259,11 @@ export class TelegramUpdate {
   async onMessage(@Ctx() ctx: Context): Promise<void> {
     const telegramId = String(ctx.from?.id);
     const text = ((ctx.message as any)?.text ?? '').trim();
-    await this.handleRejectionInput(telegramId, text, ctx);
+
+    if (text.startsWith('/')) return;
+    if (await this.handleVoucherSearchInput(telegramId, text, ctx)) return;
+    if (await this.handleRejectionInput(telegramId, text, ctx)) return;
+    await this.handleWithDispatch(telegramId, text, ctx);
   }
 
   @On('voice')
@@ -191,8 +271,36 @@ export class TelegramUpdate {
     const telegramId = String(ctx.from?.id);
     const fileId = (ctx.message as any)?.voice?.file_id;
 
-    const pending = this.telegramService.getPendingRejection(telegramId);
-    if (!pending) return;
+    const hasPendingSearch =
+      !!this.telegramService.getPendingVoucherSearch(telegramId);
+    const hasPendingRejection =
+      !!this.telegramService.getPendingRejection(telegramId);
+
+    if (!hasPendingSearch && !hasPendingRejection) {
+      // No pending state — transcribe and send to agent
+      const processingMsg = await ctx.reply(
+        '🎤 Đang chuyển giọng nói thành văn bản...',
+      );
+      try {
+        const text = await this.telegramService.transcribeVoice(fileId);
+        try {
+          await ctx.telegram.deleteMessage(
+            ctx.chat!.id,
+            processingMsg.message_id,
+          );
+        } catch {}
+        await ctx.reply(`🎤 *Nhận được:* _${text}_`, {
+          parse_mode: 'Markdown',
+        });
+        await this.handleWithDispatch(telegramId, text, ctx);
+      } catch (error) {
+        this.logger.error(`Voice transcription failed: ${error.message}`);
+        await ctx.reply(
+          '❌ Không thể chuyển giọng nói thành văn bản, vui lòng nhập text.',
+        );
+      }
+      return;
+    }
 
     const processingMsg = await ctx.reply(
       '🎤 Đang chuyển giọng nói thành văn bản...',
@@ -208,10 +316,13 @@ export class TelegramUpdate {
         );
       } catch {}
 
-      await ctx.reply(`🎤 *Nhận được:* _${text}_`, {
-        parse_mode: 'Markdown',
-      });
-      await this.handleRejectionInput(telegramId, text, ctx);
+      await ctx.reply(`🎤 *Nhận được:* _${text}_`, { parse_mode: 'Markdown' });
+
+      if (hasPendingSearch) {
+        await this.handleVoucherSearchInput(telegramId, text, ctx);
+      } else {
+        await this.handleRejectionInput(telegramId, text, ctx);
+      }
     } catch (error) {
       this.logger.error(`Voice transcription failed: ${error.message}`);
       await ctx.reply(
@@ -224,9 +335,9 @@ export class TelegramUpdate {
     telegramId: string,
     text: string,
     ctx: Context,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const pending = this.telegramService.getPendingRejection(telegramId);
-    if (!pending) return;
+    if (!pending) return false;
 
     if (pending.step === 'reason') {
       this.telegramService.setPendingRejection(telegramId, {
@@ -238,7 +349,7 @@ export class TelegramUpdate {
         parse_mode: 'Markdown',
         reply_markup: { force_reply: true, selective: true },
       });
-      return;
+      return true;
     }
 
     // step === 'comments' — submit rejection
@@ -266,6 +377,106 @@ export class TelegramUpdate {
       console.log('>>error: ', error?.response?.data);
       await ctx.reply('❌ Có lỗi xảy ra khi từ chối phiếu, vui lòng thử lại.');
     }
+    return true;
+  }
+
+  private async handleWithDispatch(
+    telegramId: string,
+    text: string,
+    ctx: Context,
+  ): Promise<void> {
+    const userName = ctx.from?.first_name;
+    try {
+      await ctx.sendChatAction('typing');
+
+      const previousParams =
+        this.telegramService.getLastSearchParams(telegramId);
+      const dispatch = await this.telegramService.dispatchIntent(text, {
+        previousParams,
+        userName,
+      });
+
+      if (dispatch.tool === 'searchVouchers') {
+        const userLink =
+          await this.telegramService.getUserLinkByTelegramId(telegramId);
+
+        if (
+          !userLink?.erpAccessToken ||
+          this.telegramService.isTokenExpired(userLink.erpAccessToken)
+        ) {
+          await ctx.reply(
+            '⚠️ Bạn cần kết nối tài khoản ERP trước.\n\nDùng lệnh /connect_erp <token> để kết nối.',
+          );
+          return;
+        }
+
+        const params = dispatch.arguments as VoucherSearchParams;
+        this.telegramService.setLastSearchParams(telegramId, params);
+
+        const result = await this.telegramService.searchVouchers(
+          params,
+          userLink.erpAccessToken,
+        );
+        const message =
+          this.telegramService.buildVoucherSearchResultMessage(result);
+        await ctx.reply(message, { parse_mode: 'Markdown' });
+      } else {
+        await ctx.reply(
+          dispatch.arguments['reply'] ??
+            '🤖 Xin lỗi, tôi chưa hiểu. Bạn thử diễn đạt lại nhé!',
+        );
+      }
+    } catch (error) {
+      this.logger.error(`Dispatch failed: ${error.message}`);
+      await ctx.reply(
+        '🤖 Xin lỗi, tôi đang gặp sự cố. Bạn có thể thử lại hoặc dùng /help để xem các lệnh.',
+      );
+    }
+  }
+
+  private async handleVoucherSearchInput(
+    telegramId: string,
+    text: string,
+    ctx: Context,
+  ): Promise<boolean> {
+    const pending = this.telegramService.getPendingVoucherSearch(telegramId);
+    if (!pending) return false;
+
+    this.telegramService.clearPendingVoucherSearch(telegramId);
+
+    const loadingMsg = await ctx.reply('🔍 Đang tìm kiếm...');
+
+    try {
+      const previousParams =
+        this.telegramService.getLastSearchParams(telegramId);
+      const params = await this.telegramService.parseVoucherQuery(
+        text,
+        previousParams,
+      );
+      console.log('>>params: ', params);
+
+      this.telegramService.setLastSearchParams(telegramId, params);
+      const result = await this.telegramService.searchVouchers(
+        params,
+        pending.erpAccessToken,
+      );
+
+      try {
+        await ctx.telegram.deleteMessage(ctx.chat!.id, loadingMsg.message_id);
+      } catch {}
+
+      const message =
+        this.telegramService.buildVoucherSearchResultMessage(result);
+      await ctx.reply(message, { parse_mode: 'Markdown' });
+    } catch (error) {
+      this.logger.error(`Voucher search failed: ${error.message}`);
+      try {
+        await ctx.telegram.deleteMessage(ctx.chat!.id, loadingMsg.message_id);
+      } catch {}
+      await ctx.reply('❌ Có lỗi xảy ra khi tìm kiếm, vui lòng thử lại.');
+    }
+
+    return true;
   }
 
   @Hears(/hello/i)
