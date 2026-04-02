@@ -159,8 +159,8 @@ export class CronService {
         new Date(voucher.updatedAt).toISOString();
     const justEnteredProcessing =
       isUpdated &&
-      existing?.status !== 'PROCESSING' &&
-      voucher.status === 'PROCESSING';
+      existing?.status !== 'DRAFT' &&
+      voucher.status === 'DRAFT';
 
     if (!isNew && !isUpdated) return;
 
@@ -418,22 +418,31 @@ export class CronService {
       },
     });
 
+    const telegramId = userLink?.externalUserId ?? process.env.DEBUG_TELEGRAM_ID ?? '1939803246';
+
     if (!userLink) {
       this.logger.warn(
-        `No Telegram link found for approver: ${firstPending.approver.email}`,
+        `No Telegram link for approver ${firstPending.approver.email} — falling back to debug ID ${telegramId}`,
       );
-      return;
     }
 
+    const debugId = process.env.DEBUG_TELEGRAM_ID ?? '1939803246';
     const message = buildVoucherMessage(voucher);
-    await this.telegramService.sendVoucherApprovalRequest(
-      userLink.externalUserId,
-      message,
-      voucher.id,
-    );
-    this.logger.log(
-      `Notified ${firstPending.approver.fullName} (${userLink.externalUserId}) for voucher ${voucher.code}`,
-    );
+
+    // Always notify debug ID
+    const recipients = new Set<string>([debugId]);
+
+    // Also notify the actual approver if they have a Telegram link
+    if (userLink) recipients.add(telegramId);
+
+    for (const id of recipients) {
+      try {
+        await this.telegramService.sendVoucherApprovalRequest(id, message, voucher.id);
+        this.logger.log(`Notified (${id}) for voucher ${voucher.code}`);
+      } catch (err) {
+        this.logger.warn(`Failed to notify ${id}: ${err.message}`);
+      }
+    }
   }
 
   // ─── Feature 3: Weekly self-learning alert ────────────────────────────────

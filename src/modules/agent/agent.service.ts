@@ -73,14 +73,20 @@ export class AgentService {
     history: ChatCompletionMessageParam[],
     erpToken?: string,
   ): Promise<string> {
-    let response = await this.groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'system', content: this.buildSystemPrompt() }, ...history],
-      tools: TOOLS,
-      tool_choice: 'auto',
-      temperature: 0.3,
-      max_tokens: 1024,
-    });
+    let response;
+    try {
+      response = await this.groq.chat.completions.create({
+        model: 'llama-3.3-70b-versatile',
+        messages: [{ role: 'system', content: this.buildSystemPrompt() }, ...history],
+        tools: TOOLS,
+        tool_choice: 'auto',
+        temperature: 0.3,
+        max_tokens: 1024,
+      });
+    } catch (err) {
+      this.logger.error(`Groq initial call failed: ${err.message}`);
+      return 'Xin lỗi, tôi không thể xử lý yêu cầu này. Bạn thử hỏi lại theo cách khác nhé.';
+    }
 
     // Loop until no more tool calls (max 5 iterations to prevent infinite loops)
     let iterations = 0;
@@ -201,14 +207,14 @@ export class AgentService {
     params: VoucherSearchParams,
     erpToken?: string,
   ): Promise<string> {
-    if (!erpToken) return '⚠️ Bạn cần kết nối tài khoản ERP trước. Dùng /connect_erp <token>.';
+    // Use per-user token if available, otherwise fall back to system token (read-only is fine)
+    const config = erpToken
+      ? { params, headers: { authorization: `Bearer ${erpToken}` } }
+      : { params };
 
     const response = await this.httpService.get<ListPaymentVoucherResponse>(
       '/accounting/vouchers',
-      {
-        params,
-        headers: { authorization: `Bearer ${erpToken}` },
-      },
+      config,
     );
 
     const { data, total } = response;
@@ -228,22 +234,20 @@ export class AgentService {
     args: { id?: string; code?: string },
     erpToken?: string,
   ): Promise<string> {
-    if (!erpToken) return '⚠️ Bạn cần kết nối tài khoản ERP trước.';
     if (!args.id && !args.code) return 'Cần cung cấp id hoặc code của phiếu.';
+
+    const authHeader = erpToken ? { authorization: `Bearer ${erpToken}` } : undefined;
 
     let voucher: PaymentVoucher;
     if (args.id) {
       voucher = await this.httpService.get<PaymentVoucher>(
         `/accounting/vouchers/${args.id}/detail`,
-        { headers: { authorization: `Bearer ${erpToken}` } },
+        authHeader ? { headers: authHeader } : undefined,
       );
     } else {
       const list = await this.httpService.get<ListPaymentVoucherResponse>(
         '/accounting/vouchers',
-        {
-          params: { code: args.code, limit: 1 },
-          headers: { authorization: `Bearer ${erpToken}` },
-        },
+        { params: { code: args.code, limit: 1 }, ...(authHeader ? { headers: authHeader } : {}) },
       );
       if (!list.data.length) return `Không tìm thấy phiếu với mã ${args.code}.`;
       voucher = list.data[0];
@@ -338,7 +342,7 @@ Bạn có thể:
 Quy tắc:
 - Luôn trả lời bằng tiếng Việt, ngắn gọn và thân thiện
 - Dùng tools khi cần lấy dữ liệu thực tế, không đoán
-- Nếu cần token ERP mà chưa có, hướng dẫn dùng /connect_erp
+- Tìm kiếm và xem phiếu không cần token, cứ gọi thẳng tool
 - Định dạng số tiền theo kiểu Việt Nam (dấu chấm phân cách hàng nghìn)
 - Phiếu chi = PAYMENT, phiếu thu = RECEIPT
 - Trạng thái: DRAFT=nháp, PROCESSING=chờ duyệt, APPROVED=đã duyệt, REJECTED=từ chối`;
