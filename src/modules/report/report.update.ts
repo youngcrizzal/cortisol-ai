@@ -47,12 +47,22 @@ export class ReportUpdate {
     }
 
     const userId = String(ctx.from!.id);
-    const mode = this.reportService.consumeUploadMode(userId);
+    let mode = this.reportService.consumeUploadMode(userId);
+
+    // Auto-detect from filename
+    if (!mode) {
+      if (fileName.includes('so_chi') || fileName.includes('so_cai')) {
+        mode = 'so_cai';
+      } else if (fileName.includes('tai_khoan') || fileName.includes('danh_sach')) {
+        mode = 'tai_khoan';
+      }
+    }
 
     if (!mode) {
       await ctx.reply(
-        '⚠️ Chưa xác định loại file.\n' +
-          'Dùng /upload_tai_khoan hoặc /upload_so_cai trước khi gửi file.',
+        '⚠️ Không thể nhận diện loại file.\n' +
+          'Tên file cần chứa "so_chi"/"so_cai" hoặc "tai_khoan"/"danh_sach".\n' +
+          'Hoặc dùng /upload_tai_khoan hoặc /upload_so_cai trước khi gửi.',
       );
       return;
     }

@@ -38,6 +38,13 @@ export interface SelfLearningViolation {
   overHours: number;
 }
 
+export interface SelfLearningEntry {
+  name: string;
+  standardHours: number;
+  loggedHours: number;
+  selfLearningHours: number;
+}
+
 @Injectable()
 export class JiraService {
   private readonly logger = new Logger(JiraService.name);
@@ -213,74 +220,58 @@ export class JiraService {
   // ─── Main violation check ────────────────────────────────────────────────
   // Called by cron every Monday (no args) or by test with explicit period.
 
-  async findViolations(overrideStart?: Date, overrideEnd?: Date): Promise<SelfLearningViolation[]> {
+  private resolvePeriod(overrideStart?: Date, overrideEnd?: Date): { monthStart: Date; periodEnd: Date } {
     const now = new Date();
-
-    // periodEnd = yesterday (inclusive), so we always have a valid range
     const periodEnd = overrideEnd ?? (() => {
       const d = new Date(now);
       d.setDate(now.getDate() - 1);
       d.setHours(23, 59, 59, 999);
       return d;
     })();
-
-    // monthStart = start of periodEnd's month (handles cross-month edge cases)
     const monthStart = overrideStart ?? new Date(periodEnd.getFullYear(), periodEnd.getMonth(), 1);
+    return { monthStart, periodEnd };
+  }
+
+  private async computeSelfLearning(overrideStart?: Date, overrideEnd?: Date): Promise<SelfLearningEntry[]> {
+    const { monthStart, periodEnd } = this.resolvePeriod(overrideStart, overrideEnd);
     const startStr = this.toDateStr(monthStart);
     const endStr = this.toDateStr(periodEnd);
 
     this.logger.log(`Checking violations: ${startStr} → ${endStr}`);
 
-    const [authorWorklogs, employees, approvedLeaves, holidays, userLinks] =
-      await Promise.all([
-        this.getWorklogsByPeriod(startStr, endStr),
-        this.getEmployeeProfiles(),
-        this.getApprovedLeaves(startStr, endStr),
-        this.getHolidaysInPeriod(startStr, endStr),
-        this.getJiraUserLinks(),
-      ]);
+    const [authorWorklogs, employees, approvedLeaves, holidays, userLinks] = await Promise.all([
+      this.getWorklogsByPeriod(startStr, endStr),
+      this.getEmployeeProfiles(),
+      this.getApprovedLeaves(startStr, endStr),
+      this.getHolidaysInPeriod(startStr, endStr),
+      this.getJiraUserLinks(),
+    ]);
 
     const { accountToUserId } = userLinks;
-
-    // Build map: userId → employee profile (hireDate + profile id for leave matching)
     const employeeByUserId = new Map<string, ErpEmployeeProfile>();
     for (const emp of employees) {
       if (emp.userId) employeeByUserId.set(emp.userId, emp);
     }
-
     const holidayHours = holidays.length * 8;
 
-    // Aggregate Jira seconds by accountId (API returns per-project rows for same author)
     const secondsByAccountId = new Map<string, number>();
     const displayNameByAccountId = new Map<string, string>();
     for (const entry of authorWorklogs) {
-      secondsByAccountId.set(
-        entry.accountId,
-        (secondsByAccountId.get(entry.accountId) ?? 0) + entry.seconds,
-      );
-      if (!displayNameByAccountId.has(entry.accountId)) {
-        displayNameByAccountId.set(entry.accountId, entry.displayName);
-      }
+      secondsByAccountId.set(entry.accountId, (secondsByAccountId.get(entry.accountId) ?? 0) + entry.seconds);
+      if (!displayNameByAccountId.has(entry.accountId)) displayNameByAccountId.set(entry.accountId, entry.displayName);
     }
 
-    const violations: SelfLearningViolation[] = [];
-
+    const result: SelfLearningEntry[] = [];
     for (const [accountId, totalSeconds] of secondsByAccountId) {
       const userId = accountToUserId.get(accountId);
       if (!userId) {
-        this.logger.debug(
-          `No UserLink for Jira accountId ${accountId} (${displayNameByAccountId.get(accountId)}) — skipping`,
-        );
+        this.logger.debug(`No UserLink for Jira accountId ${accountId} (${displayNameByAccountId.get(accountId)}) — skipping`);
         continue;
       }
 
       const employee = employeeByUserId.get(userId);
-      const displayName =
-        employee?.fullName ??
-        displayNameByAccountId.get(accountId) ??
-        accountId;
+      const displayName = employee?.fullName ?? displayNameByAccountId.get(accountId) ?? accountId;
 
-      // Respect mid-month join date
       let periodStart = new Date(monthStart);
       if (employee?.hireDate) {
         const joinDate = new Date(employee.hireDate);
@@ -291,35 +282,38 @@ export class JiraService {
 
       const workingDays = this.countWorkingDays(periodStart, periodEnd);
       let standardHours = workingDays * 8 - holidayHours;
-
       if (employee) {
-        const leaveHours = this.calcLeaveHoursInPeriod(
-          approvedLeaves,
-          employee.id, // employee_profiles.id = time_applications.employeeId
-          periodStart,
-          periodEnd,
-        );
-        standardHours -= leaveHours;
+        standardHours -= this.calcLeaveHoursInPeriod(approvedLeaves, employee.id, periodStart, periodEnd);
       }
-
       standardHours = Math.max(0, standardHours);
 
       const loggedHours = totalSeconds / 3600;
       const selfLearning = standardHours - loggedHours;
+      this.logger.debug(`${displayName}: standard=${standardHours}h, logged=${loggedHours.toFixed(1)}h, self-learning=${selfLearning.toFixed(1)}h`);
 
-      this.logger.debug(
-        `${displayName}: standard=${standardHours}h, logged=${loggedHours.toFixed(1)}h, self-learning=${selfLearning.toFixed(1)}h`,
-      );
-
-      if (selfLearning > 30) {
-        violations.push({
-          name: displayName,
-          selfLearningHours: Math.round(selfLearning * 10) / 10,
-          overHours: Math.round((selfLearning - 30) * 10) / 10,
-        });
-      }
+      result.push({
+        name: displayName,
+        standardHours,
+        loggedHours: Math.round(loggedHours * 10) / 10,
+        selfLearningHours: Math.round(selfLearning * 10) / 10,
+      });
     }
 
-    return violations.sort((a, b) => b.selfLearningHours - a.selfLearningHours);
+    return result.sort((a, b) => b.selfLearningHours - a.selfLearningHours);
+  }
+
+  async findViolations(overrideStart?: Date, overrideEnd?: Date): Promise<SelfLearningViolation[]> {
+    const all = await this.computeSelfLearning(overrideStart, overrideEnd);
+    return all
+      .filter((e) => e.selfLearningHours > 30)
+      .map((e) => ({
+        name: e.name,
+        selfLearningHours: e.selfLearningHours,
+        overHours: Math.round((e.selfLearningHours - 30) * 10) / 10,
+      }));
+  }
+
+  async getAllSelfLearningHours(overrideStart?: Date, overrideEnd?: Date): Promise<SelfLearningEntry[]> {
+    return this.computeSelfLearning(overrideStart, overrideEnd);
   }
 }

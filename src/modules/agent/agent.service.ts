@@ -49,15 +49,25 @@ export class AgentService {
     erpToken?: string,
   ): Promise<AgentReply> {
     this.pendingFile = null;
-    const history = this.getHistory(telegramId);
+    let history = this.getHistory(telegramId);
     history.push({ role: 'user', content: userMessage });
 
-    const reply = await this.runAgentLoop(history, erpToken);
+    let reply = await this.runAgentLoop(history, erpToken);
+
+    // If the initial Groq call failed (likely corrupt history), reset and retry once
+    if (reply === 'Xin lỗi, tôi không thể xử lý yêu cầu này. Bạn thử hỏi lại theo cách khác nhé.') {
+      this.logger.warn(`History may be corrupt for ${telegramId}, resetting and retrying`);
+      this.histories.delete(telegramId);
+      history = this.getHistory(telegramId);
+      history.push({ role: 'user', content: userMessage });
+      reply = await this.runAgentLoop(history, erpToken);
+    }
 
     history.push({ role: 'assistant', content: reply });
     this.trimHistory(telegramId);
 
     const pf = this.pendingFile as { path: string; name: string } | null;
+    this.logger.log(`chat() done — pendingFile: ${pf ? pf.name : 'none'}`);
     return pf
       ? { reply, filePath: pf.path, fileName: pf.name }
       : { reply };
@@ -73,19 +83,34 @@ export class AgentService {
     history: ChatCompletionMessageParam[],
     erpToken?: string,
   ): Promise<string> {
+    const MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
     let response;
-    try {
-      response = await this.groq.chat.completions.create({
-        model: 'llama-3.3-70b-versatile',
-        messages: [{ role: 'system', content: this.buildSystemPrompt() }, ...history],
-        tools: TOOLS,
-        tool_choice: 'auto',
-        temperature: 0.3,
-        max_tokens: 1024,
-      });
-    } catch (err) {
-      this.logger.error(`Groq initial call failed: ${err.message}`);
-      return 'Xin lỗi, tôi không thể xử lý yêu cầu này. Bạn thử hỏi lại theo cách khác nhé.';
+    let lastErr: any;
+    for (const model of MODELS) {
+      try {
+        response = await this.groq.chat.completions.create({
+          model,
+          messages: [{ role: 'system', content: this.buildSystemPrompt() }, ...history],
+          tools: TOOLS,
+          tool_choice: 'auto',
+          temperature: 0.3,
+          max_tokens: 1024,
+        });
+        if (model !== MODELS[0]) this.logger.warn(`Fell back to model: ${model}`);
+        break;
+      } catch (err) {
+        lastErr = err;
+        if (err.status === 429) {
+          this.logger.warn(`Model ${model} rate limited (429), trying next...`);
+          continue;
+        }
+        this.logger.error(`Groq initial call failed: ${err.message} | status: ${err.status ?? 'unknown'}`);
+        break;
+      }
+    }
+    if (!response) {
+      this.logger.error(`All models failed. Last error: ${lastErr?.message}`);
+      return 'Xin lỗi, hệ thống AI đang quá tải. Vui lòng thử lại sau ít phút.';
     }
 
     // Loop until no more tool calls (max 5 iterations to prevent infinite loops)
@@ -154,18 +179,27 @@ export class AgentService {
 
       history.push(...toolMessages);
 
-      try {
-        response = await this.groq.chat.completions.create({
-          model: 'llama-3.3-70b-versatile',
-          messages: [{ role: 'system', content: this.buildSystemPrompt() }, ...history],
-          tools: TOOLS,
-          tool_choice: 'auto',
-          temperature: 0.3,
-          max_tokens: 1024,
-        });
-      } catch (err) {
-        // Rollback dirty history state and return graceful message
-        this.logger.error(`Groq API error in agentic loop: ${err.message}`);
+      let loopErr: any;
+      response = undefined as any;
+      for (const model of MODELS) {
+        try {
+          response = await this.groq.chat.completions.create({
+            model,
+            messages: [{ role: 'system', content: this.buildSystemPrompt() }, ...history],
+            tools: TOOLS,
+            tool_choice: 'auto',
+            temperature: 0.3,
+            max_tokens: 1024,
+          });
+          break;
+        } catch (err) {
+          loopErr = err;
+          if (err.status === 429) { continue; }
+          break;
+        }
+      }
+      if (!response) {
+        this.logger.error(`Groq loop error: ${loopErr?.message}`);
         history.splice(historyLenBefore);
         return 'Xin lỗi, đã có lỗi khi xử lý yêu cầu. Vui lòng thử lại.';
       }
@@ -190,6 +224,8 @@ export class AgentService {
           return await this.toolGetVoucherDetail(args, erpToken);
         case 'find_violations':
           return await this.toolFindViolations();
+        case 'get_all_selflearning_hours':
+          return await this.toolGetAllSelfLearningHours(args.month, args.year);
         case 'query_ledger':
           return await this.toolQueryLedger(args.question);
         case 'generate_cashflow_report':
@@ -268,6 +304,21 @@ export class AgentService {
     ]
       .filter(Boolean)
       .join('\n');
+  }
+
+  private async toolGetAllSelfLearningHours(month?: number, year?: number): Promise<string> {
+    // Default to previous month if no month specified (current month likely has no Jira data yet)
+    const now = new Date();
+    const targetMonth = month ?? (now.getMonth() === 0 ? 12 : now.getMonth()); // getMonth() is 0-based, so getMonth()=0 means Jan → prev=Dec
+    const targetYear = year ?? (now.getMonth() === 0 ? now.getFullYear() - 1 : now.getFullYear());
+    const start = new Date(targetYear, targetMonth - 1, 1);
+    const end = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999); // last day of month
+    const entries = await this.jiraService.getAllSelfLearningHours(start, end);
+    if (!entries.length) return `Không có dữ liệu Jira tháng ${targetMonth}/${targetYear}.`;
+    const lines = entries.map(
+      (e, i) => `${i + 1}. ${e.name}: ${e.selfLearningHours}h tự học (log ${e.loggedHours}h / ${e.standardHours}h tiêu chuẩn)`,
+    );
+    return [`📊 Giờ tự học tháng ${targetMonth}/${targetYear} (${entries.length} nhân viên):`, ...lines].join('\n');
   }
 
   private async toolFindViolations(): Promise<string> {
@@ -430,6 +481,21 @@ const TOOLS: ChatCompletionTool[] = [
           },
         },
         required: ['question'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_all_selflearning_hours',
+      description:
+        'Lấy danh sách tất cả nhân viên và số giờ tự học, sắp xếp từ cao đến thấp. Mặc định tháng trước. Dùng khi hỏi ai có giờ tự học nhiều nhất, liệt kê tất cả, xếp hạng giờ tự học.',
+      parameters: {
+        type: 'object',
+        properties: {
+          month: { type: 'number', description: 'Tháng cần kiểm tra (1-12). Mặc định: tháng trước.' },
+          year: { type: 'number', description: 'Năm cần kiểm tra. Mặc định: năm hiện tại.' },
+        },
       },
     },
   },
