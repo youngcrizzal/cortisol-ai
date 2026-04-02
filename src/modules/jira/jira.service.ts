@@ -216,15 +216,16 @@ export class JiraService {
   async findViolations(overrideStart?: Date, overrideEnd?: Date): Promise<SelfLearningViolation[]> {
     const now = new Date();
 
-    // Cron runs on Monday — check from start of month up to last Friday
+    // periodEnd = yesterday (inclusive), so we always have a valid range
     const periodEnd = overrideEnd ?? (() => {
       const d = new Date(now);
-      d.setDate(now.getDate() - 3);
+      d.setDate(now.getDate() - 1);
       d.setHours(23, 59, 59, 999);
       return d;
     })();
 
-    const monthStart = overrideStart ?? new Date(now.getFullYear(), now.getMonth(), 1);
+    // monthStart = start of periodEnd's month (handles cross-month edge cases)
+    const monthStart = overrideStart ?? new Date(periodEnd.getFullYear(), periodEnd.getMonth(), 1);
     const startStr = this.toDateStr(monthStart);
     const endStr = this.toDateStr(periodEnd);
 
