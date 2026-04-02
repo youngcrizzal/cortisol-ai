@@ -6,6 +6,7 @@ import { InjectBot } from 'nestjs-telegraf';
 import { Telegraf } from 'telegraf';
 import { buildVoucherMessage, buildVoucherListMessage } from 'src/lib/voucher';
 import { PrismaService } from 'src/prisma/prisma.service';
+import type { ErpEmployeeProfile } from 'src/types/erp';
 import { HttpService } from '../http/http.service';
 
 interface PendingRejection {
@@ -151,6 +152,27 @@ export class TelegramService {
     });
   }
 
+  /**
+   * Resolve ERP role → Telegram chat IDs.
+   * Calls ERP to get employees by role, then joins with the locally-synced
+   * UserLink table (no extra ERP call needed for Telegram IDs).
+   */
+  async findTelegramIdsByRole(role: string): Promise<string[]> {
+    const response = await this.httpService.get<{ data: ErpEmployeeProfile[] }>(
+      '/hr/employees',
+      { params: { role, status: 'ACTIVE', limit: 200 } },
+    );
+
+    const userIds = response.data.map((e) => e.userId).filter(Boolean);
+    if (!userIds.length) return [];
+
+    const links = await this.prisma.userLink.findMany({
+      where: { userId: { in: userIds }, externalSystem: 'TELEGRAM', active: true },
+    });
+
+    return links.map((l) => l.externalUserId);
+  }
+
   async saveErpToken(telegramId: string, token: string) {
     await this.prisma.userLink.updateMany({
       where: { externalUserId: telegramId, externalSystem: 'TELEGRAM' },
@@ -265,67 +287,39 @@ export class TelegramService {
 
   private async notifyVoucherFullyApproved(voucher: PaymentVoucher) {
     try {
-      const voucherRecord = await this.prisma.paymentVoucher.findUnique({
-        where: { id: voucher.id },
-        include: { creator: true },
-      });
-
-      if (!voucherRecord?.creator) return;
-
       const message =
         `✅ Phiếu *${voucher.code}* đã được phê duyệt hoàn tất!\n\n` +
         `💰 Số tiền: *${Number(voucher.totalAmount).toLocaleString('vi-VN')} ${voucher.currency}*\n` +
         `📝 Nội dung: ${voucher.content}`;
 
-      // Notify creator
-      const creatorUserLink = await this.prisma.userLink.findFirst({
-        where: {
-          userEmail: voucherRecord.creator.email,
-          active: true,
-          externalSystem: 'TELEGRAM',
-        },
+      // Notify all kế toán (ACCOUNTING role) — they manage the voucher lifecycle
+      const accountingIds = await this.findTelegramIdsByRole('ACCOUNTING');
+      for (const telegramId of accountingIds) {
+        await this.sendMessageToUser(telegramId, message);
+      }
+      this.logger.log(
+        `Notified ${accountingIds.length} ACCOUNTING user(s) of full approval for voucher ${voucher.code}`,
+      );
+
+      // Also notify the voucher creator if they are not already in the ACCOUNTING list
+      const voucherRecord = await this.prisma.paymentVoucher.findUnique({
+        where: { id: voucher.id },
+        include: { creator: true },
       });
 
-      if (creatorUserLink) {
-        await this.sendMessageToUser(creatorUserLink.externalUserId, message);
-        this.logger.log(
-          `Notified creator ${voucherRecord.creator.email} of full approval for voucher ${voucher.code}`,
-        );
-      } else {
-        this.logger.warn(
-          `No Telegram link for creator: ${voucherRecord.creator.email}`,
-        );
-      }
-
-      // Notify first approver (if different from creator)
-      const sortedApprovals = (voucher.approvals ?? []).sort(
-        (a, b) => a.index - b.index,
-      );
-      const firstApproval = sortedApprovals[0];
-
-      if (
-        firstApproval?.approver?.email &&
-        firstApproval.approver.email !== voucherRecord.creator.email
-      ) {
-        const firstApproverUserLink = await this.prisma.userLink.findFirst({
+      if (voucherRecord?.creator) {
+        const creatorLink = await this.prisma.userLink.findFirst({
           where: {
-            userEmail: firstApproval.approver.email,
+            userEmail: voucherRecord.creator.email,
             active: true,
             externalSystem: 'TELEGRAM',
           },
         });
 
-        if (firstApproverUserLink) {
-          await this.sendMessageToUser(
-            firstApproverUserLink.externalUserId,
-            message,
-          );
+        if (creatorLink && !accountingIds.includes(creatorLink.externalUserId)) {
+          await this.sendMessageToUser(creatorLink.externalUserId, message);
           this.logger.log(
-            `Notified first approver ${firstApproval.approver.email} of full approval for voucher ${voucher.code}`,
-          );
-        } else {
-          this.logger.warn(
-            `No Telegram link for first approver: ${firstApproval.approver.email}`,
+            `Notified creator ${voucherRecord.creator.email} of full approval for voucher ${voucher.code}`,
           );
         }
       }
@@ -364,7 +358,13 @@ export class TelegramService {
 
       message += detail;
 
-      // Notify creator
+      // Notify all kế toán (ACCOUNTING role)
+      const accountingIds = await this.findTelegramIdsByRole('ACCOUNTING');
+      for (const telegramId of accountingIds) {
+        await this.sendMessageToUser(telegramId, message);
+      }
+
+      // Also notify the voucher creator if not already in ACCOUNTING list
       const voucherRecord = await this.prisma.paymentVoucher.findUnique({
         where: { id: voucherId },
         include: { creator: true },
@@ -379,12 +379,8 @@ export class TelegramService {
           },
         });
 
-        if (creatorUserLink) {
+        if (creatorUserLink && !accountingIds.includes(creatorUserLink.externalUserId)) {
           await this.sendMessageToUser(creatorUserLink.externalUserId, message);
-        } else {
-          this.logger.warn(
-            `No Telegram link for creator: ${voucherRecord.creator.email}`,
-          );
         }
       }
 

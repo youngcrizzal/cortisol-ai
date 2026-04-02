@@ -139,6 +139,9 @@ export interface ErpEmployeeProfile {
   employeeCode: string;
   hireDate: string; // ISO timestamp = joinDate in DB
   status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+  role?: string;       // e.g. 'ACCOUNTING' | 'BOD' | 'MANAGEMENT' | 'EMPLOYEE' | 'HR' | 'PM'
+  department?: string; // e.g. 'KT' | 'BLĐ' | 'DA'
+  position?: string;
 }
 
 // ─── Holidays ─────────────────────────────────────────────────────────────

@@ -19,7 +19,6 @@ export class HttpService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    this.accessToken = this.config.get<string>('ERP_ACCESS_TOKEN') ?? null;
     const baseURL = this.nestHttpService.axiosRef.defaults.baseURL;
     this.logger.log(`ERP base URL: ${baseURL}`);
 

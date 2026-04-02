@@ -13,13 +13,17 @@ import {
 } from 'nestjs-telegraf';
 import { Context } from 'telegraf';
 import { buildVoucherMessage } from 'src/lib/voucher';
+import { AgentService } from '../agent/agent.service';
 import { TelegramService } from './telegram.service';
 
 @Update()
 export class TelegramUpdate {
   private readonly logger = new Logger(TelegramUpdate.name);
 
-  constructor(private readonly telegramService: TelegramService) {}
+  constructor(
+    private readonly telegramService: TelegramService,
+    private readonly agentService: AgentService,
+  ) {}
 
   @Start()
   async onStart(@Ctx() ctx: Context) {
@@ -385,52 +389,25 @@ export class TelegramUpdate {
     text: string,
     ctx: Context,
   ): Promise<void> {
-    const userName = ctx.from?.first_name;
     try {
       await ctx.sendChatAction('typing');
 
-      const previousParams =
-        this.telegramService.getLastSearchParams(telegramId);
-      const dispatch = await this.telegramService.dispatchIntent(text, {
-        previousParams,
-        userName,
-      });
+      const userLink = await this.telegramService.getUserLinkByTelegramId(telegramId);
+      const erpToken =
+        userLink?.erpAccessToken &&
+        !this.telegramService.isTokenExpired(userLink.erpAccessToken)
+          ? userLink.erpAccessToken
+          : undefined;
 
-      if (dispatch.tool === 'searchVouchers') {
-        const userLink =
-          await this.telegramService.getUserLinkByTelegramId(telegramId);
-
-        if (
-          !userLink?.erpAccessToken ||
-          this.telegramService.isTokenExpired(userLink.erpAccessToken)
-        ) {
-          await ctx.reply(
-            '⚠️ Bạn cần kết nối tài khoản ERP trước.\n\nDùng lệnh /connect_erp <token> để kết nối.',
-          );
-          return;
-        }
-
-        const params = dispatch.arguments as VoucherSearchParams;
-        this.telegramService.setLastSearchParams(telegramId, params);
-
-        const result = await this.telegramService.searchVouchers(
-          params,
-          userLink.erpAccessToken,
-        );
-        const message =
-          this.telegramService.buildVoucherSearchResultMessage(result);
-        await ctx.reply(message, { parse_mode: 'Markdown' });
-      } else {
-        await ctx.reply(
-          dispatch.arguments['reply'] ??
-            '🤖 Xin lỗi, tôi chưa hiểu. Bạn thử diễn đạt lại nhé!',
-        );
+      const { reply, filePath, fileName } = await this.agentService.chat(telegramId, text, erpToken);
+      if (filePath && fileName) {
+        const { createReadStream } = await import('fs');
+        await ctx.replyWithDocument({ source: createReadStream(filePath), filename: fileName });
       }
+      await ctx.reply(reply, { parse_mode: 'Markdown' }).catch(() => ctx.reply(reply));
     } catch (error) {
-      this.logger.error(`Dispatch failed: ${error.message}`);
-      await ctx.reply(
-        '🤖 Xin lỗi, tôi đang gặp sự cố. Bạn có thể thử lại hoặc dùng /help để xem các lệnh.',
-      );
+      this.logger.error(`Agent failed: ${error.message}`);
+      await ctx.reply('🤖 Xin lỗi, tôi đang gặp sự cố. Bạn thử lại sau nhé.');
     }
   }
 
